@@ -4,27 +4,45 @@ const fs = require("fs");
 const { Transform } = require("stream");
 const { pipeline } = require("stream/promises");
 
-let isHeaders = false;
+let isHeaders = true;
 let headers;
 
-function transformData(chunk, encoding, callback){
-  const dataRows = chunk.toString().split('\r')  
-  if(!isHeaders){
-      isHeaders = true
-      headers = dataRows[0].split(',')
-      dataRows.shift()
+class CsvTransform extends Transform{
+  constructor(separator){
+    super()
+    this.separator = separator || ','
   }
-  dataRows.map(element => {
-      const jsonObject = {}
-      const csvLine = element.split(',')
 
-      headers.map((header, index) => {
-        jsonObject[header] = csvLine[index]
-      })
-      
-      this.push(',\n' + JSON.stringify(jsonObject, null, 4))
-  })
-  callback();
+  _transform(chunk, encoding, callback){
+    const dataRows = chunk.toString().split('\r')  
+    if(isHeaders){
+        headers = dataRows[0].split(this.separator)
+        dataRows.shift()
+        this.push('[\n')
+    }
+
+    dataRows.map(element => {
+        const jsonObject = {}
+        const csvLine = element.split(this.separator)
+  
+        headers.map((header, index) => {
+          jsonObject[header] = csvLine[index]
+        })
+        
+        if(!isHeaders) {
+          this.push(',\n')
+        } else {
+          isHeaders = false
+        }
+        this.push(JSON.stringify(jsonObject, null, 4))
+    })
+    callback();
+  }
+
+  _flush(callback){
+    this.push(']')
+    callback
+  }
 }
 
 async function createPipeline(readableStream, transformStream, writeableStream){
@@ -66,14 +84,10 @@ async function transformCsvToJson(sourceFile, resultFile, separator = ','){
 
   const readStream = fs.createReadStream(sourceFile);
   const writeStream = fs.createWriteStream(resultFile);
-  const startBracketStream = fs.createWriteStream(resultFile);
 
-  const transform = new Transform({
-    transform: transformData,
-  });
-  
+  const transform = new CsvTransform(separator)
+
   await createPipeline(readStream, transform, writeStream)
-  addBracketsToFile(resultFile, startBracketStream)
 }
 
 async function main(){
